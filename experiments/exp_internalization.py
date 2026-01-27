@@ -11,8 +11,8 @@ def run_internalization_experiment(output_dir="plots"):
         os.makedirs(output_dir)
         
     scenarios = ["50%", "100%"]
-    steps = 96
-    num_sims = 20
+    steps = 300
+    num_sims = 1000
     
     avg_results = {s: np.zeros(steps) for s in scenarios}
     
@@ -25,13 +25,35 @@ def run_internalization_experiment(output_dir="plots"):
             comp_mm = sim.market_makers[0]
             
             # Disable Hedging (Ref paper: "metrics... purely due to internalization")
-            # We set Gamma = 0 or overload hedging func
             target_mm.gamma = 0.0
             target_mm.calculate_hedge_quantity = lambda a, b: (0.0, 0)
-            
             comp_mm.gamma = 0.0
             comp_mm.calculate_hedge_quantity = lambda a, b: (0.0, 0)
             
+            # Disable Tiering (Simplified case: No Tiering)
+            # Both MMs must have same pricing curve (except for shift)
+            target_mm.investor_tiers = {i: 0 for i in sim.investors} # Force Tier 0? Or doesn't matter if delta=0
+            comp_mm.investor_tiers = {i: 0 for i in sim.investors}
+            
+            # Important: Set delta_tier = 0 to effectively remove tiering penalty
+            cfg.MM_DELTA_TIER = 0.0 # Hack global or set per agent? 
+            # Agent class uses cfg.MM_DELTA_TIER. 
+            # Let's patch the get_quote of agents or patch cfg.
+            # But we run parallel? No, valid sequential.
+            # Better: Modify get_quote inside loop? No, that's messy.
+            # Let's overwrite agent method or attributes if we had them.
+            # Agents read cfg module. 
+            
+            # Cleanest: Inject logic. agent.get_quote uses `penalty = cfg.MM_DELTA_TIER * tier`.
+            # We can't easily change cfg per agent.
+            # We will MonkeyPatch the agent instance's get_quote_spread?
+            # Or just set their tiers to 0 always.
+            target_mm.update_tiering = lambda x: None # Disable updates
+            target_mm.investor_tiers = {f"INV_{k}": 0 for k in range(10)}
+            
+            comp_mm.update_tiering = lambda x: None
+            comp_mm.investor_tiers = {f"INV_{k}": 0 for k in range(10)}
+
             # Pricing Setup
             if sc == "100%":
                  # Target MM has strictly better pricing -> 100% share
@@ -85,6 +107,10 @@ def run_internalization_experiment(output_dir="plots"):
     plt.grid(True)
     plt.savefig(f"{output_dir}/exp2_internalization.png")
     print(f"Saved {output_dir}/exp2_internalization.png")
+    
+    # Restore Global Config (Critical for subsequent experiments)
+    cfg.MM_DELTA_TIER = 4.0 # Default value
+    print("Restored cfg.MM_DELTA_TIER to default.")
 
 if __name__ == "__main__":
     run_internalization_experiment()

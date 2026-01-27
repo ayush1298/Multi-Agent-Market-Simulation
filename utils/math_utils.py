@@ -65,7 +65,7 @@ def solve_almgren_chriss(initial_position_z,
             
         variance *= (sigma ** 2)
         
-        return expected_cost + gamma * np.sqrt(variance + 1e-12)
+        return expected_cost + gamma * variance
 
     # Initial Guess: Uniform
     x0_guess = np.ones(n_steps) / n_steps

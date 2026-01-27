@@ -10,11 +10,13 @@ def run_hedging_experiment(output_dir="plots"):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
         
-    gammas = [0.0, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0]
+    gammas = [0.0, 0.05, 0.25, 0.5, 1.0, 5.0, 10.0]
     results_cost = []
     
-    num_sims = 5
-    steps = 50
+    num_sims = 10 # 10 sims for speed
+    steps = 96 # Plan says 500 steps usually? "Hedging experiments: 500 steps"
+    # Wait, plan2.md: "Hedging experiments: 500 steps".
+    steps = 500
     
     # We test Low Volatility (default cfg)
     

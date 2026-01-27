@@ -70,14 +70,22 @@ class DealerMarketSimulation:
             vol, direction = req # vol > 0, direction +/- 1
             
             # Get Quotes
-            best_mm = None
-            best_spread = float('inf')
-            
+            quotes = []
             for mm in self.market_makers:
                 spread = mm.get_quote_spread(self.market_env, inv.agent_id, vol)
-                if spread < best_spread:
-                    best_spread = spread
-                    best_mm = mm
+                quotes.append((spread, mm))
+                
+            # Sort by spread
+            quotes.sort(key=lambda x: x[0])
+            
+            # Identify best spread
+            best_spread = quotes[0][0]
+            
+            # Find all MMs within tolerance of best spread
+            best_mms = [mm for s, mm in quotes if abs(s - best_spread) < 1e-9]
+            
+            # Random selection for ties
+            best_mm = np.random.choice(best_mms)
             
             # Execute
             # Price = Mid + Direction * Spread
@@ -91,12 +99,15 @@ class DealerMarketSimulation:
             
             # Revenue Update (Spread Rev)
             spread_revenue = best_spread * vol
-            best_mm.record_investor_trade_yield(inv.agent_id, spread_revenue, vol)
+            # Remove immediate update: best_mm.record_investor_trade_yield(inv.agent_id, spread_revenue, vol)
             
             # Record for Delayed Metrics
             trade_record = {
                 "mm_id": best_mm.agent_id,
+                "inv_id": inv.agent_id, # Added investor ID
                 "vol": mm_signed_vol, # Signed volume from MM perspective
+                "abs_vol": vol,
+                "spread_rev": spread_revenue, # Store for total rev calc
                 "price_at_trade": current_mid, # Ref price
                 "step": step_idx
             }
@@ -161,13 +172,19 @@ class DealerMarketSimulation:
                     # Yes, any change in position counts.
                     current_step_trades.append({
                         "mm_id": mm.agent_id,
+                        "inv_id": None, # Hedge
                         "vol": taker_vol_signed,
+                        "abs_vol": hedge_vol,
+                        "spread_rev": 0.0, # Taker pays spread
                         "price_at_trade": current_mid,
                         "step": step_idx
                     })
                     current_step_trades.append({
                         "mm_id": best_maker.agent_id,
+                        "inv_id": None, # Hedge
                         "vol": maker_vol_signed,
+                        "abs_vol": hedge_vol,
+                        "spread_rev": best_maker_spread * hedge_vol, # Maker earns spread
                         "price_at_trade": current_mid,
                         "step": step_idx
                     })
@@ -241,7 +258,15 @@ class DealerMarketSimulation:
                     # v * (P_t - P_{t-Tm})
                     # Trade happened at P_{t-Tm}
                     p_old = t["price_at_trade"]
-                    r_pos += t["vol"] * (current_mid - p_old)
+                    pos_rev = t["vol"] * (current_mid - p_old)
+                    r_pos += pos_rev
+                    
+                    # Update Tiering Metric (Yield)
+                    # We combine original Spread Rev + Realized Pos Rev
+                    if t.get("inv_id") is not None:
+                        spread_rev = t.get("spread_rev", 0.0)
+                        total_trade_rev = spread_rev + pos_rev
+                        mm.update_investor_yield(t["inv_id"], total_trade_rev, t["abs_vol"])
                     
             # Risk Cost
             # min(z * deltaP, 0)

@@ -104,15 +104,16 @@ class MarketMaker:
         
         return hedge_size, direction
 
-    def record_investor_trade_yield(self, investor_id, revenue, volume):
+    def update_investor_yield(self, investor_id, total_revenue, volume):
         """
         Updates Yield EMA.
         Psi_t = Beta * Psi_{t-1} + (1-Beta) * Yield_trade
+        Yield = Total Revenue / Volume
         """
-        if volume < 1e-9:
-            return
-        
-        y_trade = revenue / volume
+        if abs(volume) < 1e-9:
+             return
+             
+        y_trade = total_revenue / abs(volume)
         beta = 0.9 # Weight decay factor
         
         prev = self.investor_yield_ema.get(investor_id, 0.0)
