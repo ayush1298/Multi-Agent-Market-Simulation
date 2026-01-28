@@ -103,12 +103,7 @@ class DealerMarketSimulation:
             best_mm.net_position += mm_signed_vol
             
             # Revenue Update (Spread Rev)
-            # PnL = Change in Asset Val + Cash Flow
-            # Asset Val Change = Vol_MM * Mid
-            # Cash Flow = - Vol_MM * Price
-            # Rev = Vol_MM * (Mid - Price)
             spread_revenue = mm_signed_vol * (current_mid - exec_price)
-            # Remove immediate update: best_mm.record_investor_trade_yield(inv.agent_id, spread_revenue, vol)
             
             # Record for Delayed Metrics
             trade_record = {
@@ -222,19 +217,9 @@ class DealerMarketSimulation:
         p_delta = current_mid - p_prev
         
         # Delayed Rev
-        delayed_idx = step_idx - cfg.TM_DELAY
-        delayed_trades = []
-        if delayed_idx >= 1: # 1-based indexing in queue storage approx?
-             # trade_queue[0] is step 1.
-             # if step_idx=5, delay=4. delayed_idx=1. trade_queue[0] matches?
-             # We appended step 1 trades to index 0.
-             # So delayed_idx should be index.
-             # step_idx 5 (current). index 4.
-             # target step 1. index 0.
-             # index = (step_idx - 1) - delay
-             queue_idx = (step_idx - 1) - cfg.TM_DELAY
-             if queue_idx >= 0:
-                 delayed_trades = self.trade_queue[queue_idx]
+        queue_idx = (step_idx - 1) - cfg.TM_DELAY
+        if queue_idx >= 0:
+             delayed_trades = self.trade_queue[queue_idx]
                  
         # Aggregation per MM
         for mm in self.market_makers:
@@ -246,47 +231,28 @@ class DealerMarketSimulation:
             # Spread Rev (from Investor trades this step where MM was Maker)
             for t in step_log["investor_trades"]:
                 if t["mm"] == mm.agent_id:
-                     # Price - Mid * Direction?
-                     # Spread = |Price - Mid|
-                     # Rev = Spread * Volume
                      spread = abs(t["price"] - current_mid)
                      r_spread += spread * abs(t["vol"])
                      
             # Hedging Cost (from Hedge trades this step where MM was Taker)
             for t in step_log["hedge_trades"]:
                 if t["taker"] == mm.agent_id:
-                    c_hedge += t["spread_paid"] # Already calc
+                    c_hedge += t["spread_paid"] 
                     
-            # Need to negation? Reward formula says R_total = ... + C_hedge (negative?)
-            # Plan md: C_hedge = -1 * (v * spread). (Eq 247)
-            # So we subtract.
-            
             # Position Rev
             for t in delayed_trades:
                 if t["mm_id"] == mm.agent_id:
-                    # v * (P_t - P_{t-Tm})
-                    # Trade happened at P_{t-Tm}
                     p_old = t["price_at_trade"]
                     pos_rev = t["vol"] * (current_mid - p_old)
                     r_pos += pos_rev
                     
                     # Update Tiering Metric (Yield)
-                    # We combine original Spread Rev + Realized Pos Rev
                     if t.get("inv_id") is not None:
                         spread_rev = t.get("spread_rev", 0.0)
                         total_trade_rev = spread_rev + pos_rev
                         mm.update_investor_yield(t["inv_id"], total_trade_rev, t["abs_vol"])
                     
             # Risk Cost
-            # min(z * deltaP, 0)
-            # Use position at start? or end?
-            # Plan.md: "z_{i,t} * (P_t - P_{t-1})"
-            # Assuming z_{i,t} is position HELD during the interval.
-            # Usually Start Position.
-            # step_log["mm_positions"] is END position.
-            # Start pos = End pos - NetFlow.
-            # Or just use history[-1] pos.
-            
             if self.history:
                 z_start = self.history[-1]["mm_positions"][mm.agent_id]
             else:
