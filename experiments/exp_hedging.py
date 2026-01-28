@@ -10,57 +10,63 @@ def run_hedging_experiment(output_dir="plots"):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
         
-    gammas = [0.0, 0.05, 0.25, 0.5, 1.0, 5.0, 10.0]
-    results_cost = []
+    # Parameters
+    gammas = [0.0, 0.05, 0.25, 0.5, 1.0, 100.0]
+    gamma_labels = {100.0: "Inf"} # For legend
     
-    num_sims = 10 # 10 sims for speed
-    steps = 96 # Plan says 500 steps usually? "Hedging experiments: 500 steps"
-    # Wait, plan2.md: "Hedging experiments: 500 steps".
-    steps = 500
+    volatilities = [
+        ("Low Volatility", cfg.SIGMA_MKT_LOW),   # 0.1
+        ("High Volatility", cfg.SIGMA_MKT_HIGH)  # 0.3
+    ]
     
-    # We test Low Volatility (default cfg)
+    steps = 500 # Match Figure 8/9
+    num_sims = 20
+    hedge_horizon = 20
     
-    for g in gammas:
-        print(f"  Gamma {g}...")
-        total_cost_accum = 0.0
+    for vol_name, vol_val in volatilities:
+        print(f"  Result {vol_name} (Sigma={vol_val})...")
         
-        for _ in range(num_sims):
-            sim = DealerMarketSimulation(num_mm=2, num_inv=10)
-            target_mm = sim.market_makers[0]
-            target_mm.gamma = g
+        plt.figure(figsize=(10, 6))
+        
+        for g in gammas:
+            label = gamma_labels.get(g, str(g))
+            print(f"    Gamma {label}...")
             
-            sim.run(steps=steps)
+            # Storage for cumulative trajectories
+            traj_sum = np.zeros(steps)
             
-            # Aggregate Rewards/Costs for Target MM
-            # Reward = R_spread + R_pos - C_hedge + C_risk
-            # We want "Total Cost" = -(Reward - Rev)?
-            # Paper Fig 8: "Rewards shown are cumulative... only include hedging and risk costs".
-            # So we sum (C_hedge (negative) + C_risk (negative)).
-            # And then negate to show "Cost" (Positive).
-            
-            sim_hedging = 0.0
-            sim_risk = 0.0
-            
-            for r_entry in sim.rewards[target_mm.agent_id]:
-                sim_hedging += r_entry["c_hedge"] # This is negative (cost paid)
-                sim_risk += r_entry["c_risk"] # Negative
+            for _ in range(num_sims):
+                sim = DealerMarketSimulation(num_mm=1, num_inv=10, sigma_mkt=vol_val) 
+                target_mm = sim.market_makers[0]
+                target_mm.gamma = g
+                target_mm.ex_liquidation_horizon = hedge_horizon
                 
-            total_cost = -(sim_hedging + sim_risk)
-            total_cost_accum += total_cost
+                sim.run(steps=steps)
+                
+                rewards = sim.rewards[target_mm.agent_id]
+                
+                # Metric: Only Hedging + Risk Costs (Negative Rewards)
+                # simulation.py stores 'c_hedge' as Negative and 'c_risk' as Negative.
+                totals = [r["c_hedge"] + r["c_risk"] for r in rewards]
+                
+                if len(totals) < steps:
+                    totals += [0.0] * (steps - len(totals))
+                    
+                traj = np.cumsum(totals)
+                traj_sum += traj
+                
+            avg_traj = traj_sum / num_sims
+            plt.plot(range(steps), avg_traj, label=f"RiskAversion: {label}")
             
-        avg_cost = total_cost_accum / num_sims
-        results_cost.append(avg_cost)
-        print(f"    Avg Cost: {avg_cost:.4f}")
-
-    # Plot
-    plt.figure()
-    plt.plot(gammas, results_cost, marker='o')
-    plt.title("Total Cost vs Risk Aversion (Low Volatility)")
-    plt.xlabel("Risk Aversion Gamma")
-    plt.ylabel("Cumulative Cost (Hedging + Risk)")
-    plt.grid(True)
-    plt.savefig(f"{output_dir}/exp3_hedging.png")
-    print(f"Saved {output_dir}/exp3_hedging.png")
+        plt.title(f"Impact of Hedging Risk Aversion on MM Reward - {vol_name}")
+        plt.xlabel("Time step")
+        plt.ylabel("Reward")
+        plt.legend()
+        plt.grid(True)
+        
+        filename = f"{output_dir}/exp3_hedging_{vol_name.split()[0].lower()}.png"
+        plt.savefig(filename)
+        print(f"    Saved {filename}")
 
 if __name__ == "__main__":
     run_hedging_experiment()
