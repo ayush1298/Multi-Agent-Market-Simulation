@@ -75,6 +75,32 @@ class MarketMaker:
         
         return base + penalty
 
+    def get_quoted_price(self, market_env, investor_id, volume, direction):
+        """
+        Returns the quoted price for an investor trade.
+        Price = Mid + Direction * Spread / 2  (No, the formula returns Full Spread usually? Check paper. )
+        Paper Eq 13: r^i(v) = R(v) ...
+        Usually R(v) is "price impact" or "half-spread".
+        Let's assume get_quote_spread returns the Half-Spread term relative to Mid.
+        
+        Plus Inventory Skew:
+        Skew = - gamma * sigma^2 * NetPosition
+        (Ho-Stoll logic: If Long, lower price to sell. Skew < 0.)
+        
+        Price = Mid + Skew + Direction * HalfSpread
+        """
+        half_spread = self.get_quote_spread(market_env, investor_id, volume)
+        mid = market_env.mid_price
+        
+        # Calculate Skew
+        # Using self.gamma (risk aversion) and self.sigma_est
+        # Skew = - gamma * (sigma^2) * Position
+        # Note: Position is signed.
+        skew = - self.gamma * (self.sigma_est ** 2) * self.net_position
+        
+        price = mid + skew + direction * half_spread
+        return price
+
     def calculate_hedge_quantity(self, market_env, competitor_cost_func):
         """
         Runs Almgren-Chriss optimization to determine immediate hedge size.

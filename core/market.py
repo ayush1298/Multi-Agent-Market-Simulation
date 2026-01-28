@@ -80,11 +80,11 @@ class MarketEnvironment:
         base = self.current_s0 / 2.0
         
         if self.omega is None: # Lambda=2
-            # logarithmic form: - (s0/2) * (1/v_tilde) * ln(1 - v_tilde)
+            # Appendix A.1: S_ref(v) = - (s0/2) * (1/v_tilde) * ln(1 - v_tilde)
             return -base * (1.0 / v_tilde) * np.log(1.0 - v_tilde)
         else:
-            # Power law derived form
-            # (s0/2) * (omega/v_tilde) * (1 - (1 - v_tilde)^(1/omega))
+            # Appendix A.1: S_ref(v) = (s0/2) * (omega/v_tilde) * (1 - (1 - v_tilde)^(1/omega))
+            # where omega = (lambda - 1) / (lambda - 2)
             
             term = (1.0 - v_tilde) ** (1.0 / self.omega)
             return base * (self.omega / v_tilde) * (1.0 - term)

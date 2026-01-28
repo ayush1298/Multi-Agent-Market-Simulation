@@ -69,27 +69,32 @@ class DealerMarketSimulation:
                 
             vol, direction = req # vol > 0, direction +/- 1
             
-            # Get Quotes
+            # Get Quotes (Prices)
+            # Investor chooses best price.
+            # Buy (+1): Min Price.
+            # Sell (-1): Max Price.
+            
             quotes = []
             for mm in self.market_makers:
-                spread = mm.get_quote_spread(self.market_env, inv.agent_id, vol)
-                quotes.append((spread, mm))
+                price = mm.get_quoted_price(self.market_env, inv.agent_id, vol, direction)
+                quotes.append((price, mm))
                 
-            # Sort by spread
-            quotes.sort(key=lambda x: x[0])
-            
-            # Identify best spread
-            best_spread = quotes[0][0]
-            
-            # Find all MMs within tolerance of best spread
-            best_mms = [mm for s, mm in quotes if abs(s - best_spread) < 1e-9]
-            
+            # Selection
+            if direction == 1: # Buyer searches for Min Price
+                quotes.sort(key=lambda x: x[0])
+                best_price = quotes[0][0]
+                # Ties
+                best_mms = [mm for p, mm in quotes if abs(p - best_price) < 1e-9]
+            else: # Seller searches for Max Price
+                quotes.sort(key=lambda x: x[0], reverse=True)
+                best_price = quotes[0][0]
+                best_mms = [mm for p, mm in quotes if abs(p - best_price) < 1e-9]
+                
             # Random selection for ties
             best_mm = np.random.choice(best_mms)
             
             # Execute
-            # Price = Mid + Direction * Spread
-            exec_price = current_mid + direction * best_spread
+            exec_price = best_price
             
             # MM Trade
             # Inv Buy (+1) -> MM Sell (-1)
@@ -98,7 +103,11 @@ class DealerMarketSimulation:
             best_mm.net_position += mm_signed_vol
             
             # Revenue Update (Spread Rev)
-            spread_revenue = best_spread * vol
+            # PnL = Change in Asset Val + Cash Flow
+            # Asset Val Change = Vol_MM * Mid
+            # Cash Flow = - Vol_MM * Price
+            # Rev = Vol_MM * (Mid - Price)
+            spread_revenue = mm_signed_vol * (current_mid - exec_price)
             # Remove immediate update: best_mm.record_investor_trade_yield(inv.agent_id, spread_revenue, vol)
             
             # Record for Delayed Metrics
