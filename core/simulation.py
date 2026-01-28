@@ -52,7 +52,7 @@ class DealerMarketSimulation:
             "mid_price": current_mid,
             "investor_trades": [],
             "hedge_trades": [],
-            "mm_positions": {mm.agent_id: mm.net_position for mm in self.market_makers}
+            # "mm_positions": Updated at end of step
         }
         
         # 1. Update Tiering
@@ -307,4 +307,5 @@ class DealerMarketSimulation:
                 "total": total
             })
             
+        step_log["mm_positions"] = {mm.agent_id: mm.net_position for mm in self.market_makers}
         self.history.append(step_log)

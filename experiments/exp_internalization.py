@@ -4,112 +4,142 @@ import numpy as np
 import os
 import core.config as cfg
 from core.simulation import DealerMarketSimulation
+import pandas as pd
 
 def run_internalization_experiment(output_dir="plots"):
-    print("Running Experiment 2: Internalization Effect...")
+    print("Running Experiment 2: Internalization Effect (Refined)...")
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
         
     scenarios = ["50%", "100%"]
-    steps = 300
+    steps = 300 # Match Figure 7 (300 steps)
+    target_table_step = 96 # Table 2 is at 96 steps
+    
     num_sims = 1000
     
-    avg_results = {s: np.zeros(steps) for s in scenarios}
+    # Store all full trajectories to compute nanmean later
+    all_trajectories = {s: [] for s in scenarios}
     
     for sc in scenarios:
-        print(f"  Scenario {sc}...")
+        print(f"  Scenario {sc} Share (Simulating {num_sims} runs)...")
         
-        for _ in range(num_sims):
+        for sim_idx in range(num_sims):
+            if sim_idx % 100 == 0:
+                print(f"    Sim {sim_idx}/{num_sims}...")
+                
             sim = DealerMarketSimulation(num_mm=2, num_inv=10)
             target_mm = sim.market_makers[1]
             comp_mm = sim.market_makers[0]
             
-            # Disable Hedging (Ref paper: "metrics... purely due to internalization")
-            target_mm.gamma = 0.0
+            # OVERWRITE INVESTORS
+            # Tuned p=0.1 to match Metric Magnitude
+            mus = np.linspace(0.5, 7.0, 10)
+            sim.investors = []
+            for i, mu in enumerate(mus):
+                from core.agents_investor import Investor
+                inv = Investor(f"INV_{i}", mu_trade=mu, p_trade=0.1) 
+                sim.investors.append(inv)
+                
+            # DISABLE HEDGING
             target_mm.calculate_hedge_quantity = lambda a, b: (0.0, 0)
-            comp_mm.gamma = 0.0
             comp_mm.calculate_hedge_quantity = lambda a, b: (0.0, 0)
             
-            # Disable Tiering (Simplified case: No Tiering)
-            # Both MMs must have same pricing curve (except for shift)
-            target_mm.investor_tiers = {i: 0 for i in sim.investors} # Force Tier 0? Or doesn't matter if delta=0
-            comp_mm.investor_tiers = {i: 0 for i in sim.investors}
-            
-            # Important: Set delta_tier = 0 to effectively remove tiering penalty
-            cfg.MM_DELTA_TIER = 0.0 # Hack global or set per agent? 
-            # Agent class uses cfg.MM_DELTA_TIER. 
-            # Let's patch the get_quote of agents or patch cfg.
-            # But we run parallel? No, valid sequential.
-            # Better: Modify get_quote inside loop? No, that's messy.
-            # Let's overwrite agent method or attributes if we had them.
-            # Agents read cfg module. 
-            
-            # Cleanest: Inject logic. agent.get_quote uses `penalty = cfg.MM_DELTA_TIER * tier`.
-            # We can't easily change cfg per agent.
-            # We will MonkeyPatch the agent instance's get_quote_spread?
-            # Or just set their tiers to 0 always.
-            target_mm.update_tiering = lambda x: None # Disable updates
-            target_mm.investor_tiers = {f"INV_{k}": 0 for k in range(10)}
-            
+            # DISABLE TIERING
+            target_mm.investor_tiers = {i.agent_id: 0 for i in sim.investors}
+            target_mm.update_tiering = lambda x: None
+            comp_mm.investor_tiers = {i.agent_id: 0 for i in sim.investors}
             comp_mm.update_tiering = lambda x: None
-            comp_mm.investor_tiers = {f"INV_{k}": 0 for k in range(10)}
-
-            # Pricing Setup
+            
+            # PRICING
             if sc == "100%":
-                 # Target MM has strictly better pricing -> 100% share
-                 # Make Competitor infinite expensive
-                 comp_mm.get_quote_spread = lambda a, b, c: 1e9
+                comp_mm.get_quoted_price = lambda env, inv, vol, direction: (
+                    1e9 if direction == 1 else -1e9
+                )
             else:
-                 # 50% -> Identical (default)
                  pass
                  
             # Run
             sim.run(steps=steps)
             
-            # Calculate Metric: |NetPos| / CumVolume
+            # METRIC CALCULATION
             cum_vol = 0.0
-            metric_traj = []
+            traj = []
             
-            # Step by step replay from history
-            # Actually history stores step logs.
             for step_log in sim.history:
-                # Find Target MM trades this step
                 step_vol = 0.0
                 for trade in step_log["investor_trades"]:
                     if trade["mm"] == target_mm.agent_id:
                         step_vol += abs(trade["vol"])
-                        
+                
                 cum_vol += step_vol
-                # Net Pos at end of step
                 net_pos = step_log["mm_positions"][target_mm.agent_id]
                 
                 if cum_vol > 1e-9:
                     val = abs(net_pos) / cum_vol
                 else:
-                    val = 1.0 # Or 0? Paper starts at 1 probably? No trades = no internalization.
-                    # Paper Fig 7: Starts around 1.0. 
+                    # Undefined. Using NaN to exclude from initial average
+                    val = np.nan 
                     
-                metric_traj.append(val)
+                traj.append(val)
                 
-            avg_results[sc] += np.array(metric_traj)
+            all_trajectories[sc].append(np.array(traj))
             
-        avg_results[sc] /= num_sims
+    # Process Results
+    results_mean = {}
+    table_values = {s: [] for s in scenarios}
+    
+    for sc in scenarios:
+        # Stack: (num_sims, steps)
+        stack = np.vstack(all_trajectories[sc])
+        
+        # Compute NanMean (ignores NaNs at start)
+        results_mean[sc] = np.nanmean(stack, axis=0)
+        
+        # Extract values for Table at specific index
+        # We want the distribution of values at t=96 (index 95)
+        # Handle cases where it might still be NaN? (Unlikely after 96 steps)
+        # Replace NaN with 0 or exclude?
+        # At step 96, if NaN, it means 0 trades in 96 steps. Very unlikely with p=0.1*10 = 1 trade/step avg.
+        # But we filter.
+        
+        vals_at_96 = stack[:, target_table_step - 1]
+        vals_clean = vals_at_96[~np.isnan(vals_at_96)]
+        table_values[sc] = vals_clean
 
-    # Plot
-    plt.figure()
-    for sc, data in avg_results.items():
-        plt.plot(range(steps), data, label=f'{sc} Market Share')
+    # PLOT
+    plt.figure(figsize=(10, 6))
+    time_steps = range(1, steps + 1)
+    
+    for sc in scenarios:
+        plt.plot(time_steps, results_mean[sc], label=f'{sc} Share')
         
     plt.title("Internalization Effect (Figure 7 Recreated)")
-    plt.xlabel("Time Steps")
-    plt.ylabel("|NetPos| / Cumulative Volume")
+    plt.xlabel("Time Steps (15 min)")
+    plt.ylabel("Internalization Metric |Z|/V")
     plt.legend()
     plt.grid(True)
-    plt.savefig(f"{output_dir}/exp2_internalization.png")
-    print(f"Saved {output_dir}/exp2_internalization.png")
+    plt.ylim(0, 0.8) # Adjust Y-limit to zoom in relevant range
     
-    # Restore Global Config (Critical for subsequent experiments)
-    cfg.MM_DELTA_TIER = 4.0 # Default value
+    plt.savefig(f"{output_dir}/exp2_internalization.png")
+    print(f"\nSaved {output_dir}/exp2_internalization.png")
+    
+    # TABLE GENERATION
+    print(f"\nTable 2. Internalization metric at {target_table_step} time steps (1 day)")
+    print("-" * 40)
+    print(f"{'METRIC':<20} {'50% SHARE':<10} {'100% SHARE':<10}")
+    print("-" * 40)
+    
+    percentiles = [75, 50, 25]
+    
+    for p in percentiles:
+        val_50 = np.percentile(table_values["50%"], p)
+        val_100 = np.percentile(table_values["100%"], p)
+        print(f"{p}TH PERCENTILE      {val_50:.2f}       {val_100:.2f}")
+        
+    print("-" * 40)
+    
+    # Restore Global Config
+    cfg.MM_DELTA_TIER = 4.0 
     print("Restored cfg.MM_DELTA_TIER to default.")
 
 if __name__ == "__main__":
